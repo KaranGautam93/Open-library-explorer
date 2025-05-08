@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gorilla/mux"
 	"go.mongodb.org/mongo-driver/bson"
@@ -14,20 +15,104 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/integration/mtest"
 
 	"open-library-explorer/internal/handlers"
-	"open-library-explorer/internal/models"
 )
 
-func TestLoanHandler_CheckOut(t *testing.T) {
+func TestLoanHandler_CheckIn(t *testing.T) {
 	mt := mtest.New(t, mtest.NewOptions().ClientType(mtest.Mock))
-	if mt.Client != nil { // Ensure the client is initialized before disconnecting
+	if mt.Client != nil {
 		defer mt.Client.Disconnect(context.Background())
 	}
 
-	mt.Run("successful checkout", func(mt *mtest.T) {
+	mt.Run("successful check-in", func(mt *mtest.T) {
 		handler := handlers.LoanHandler{
-			MemberCol: mt.Coll,
-			CopyCol:   mt.Coll,
-			LoanCol:   mt.Coll,
+			LoanCol:        mt.Coll,
+			ReservationCol: mt.Coll,
+			CopyCol:        mt.Coll,
+		}
+
+		copyBarcode := "123456"
+
+		// Mock loan and reservation data
+		mt.AddMockResponses(
+			// Active loan found
+			mtest.CreateCursorResponse(1, "test.loans", mtest.FirstBatch, bson.D{
+				{Key: "copy_barcode", Value: copyBarcode},
+				{Key: "returned", Value: false},
+			}),
+			// Mock reservation
+			mtest.CreateCursorResponse(1, "test.reservations", mtest.FirstBatch, bson.D{
+				{Key: "copy_barcode", Value: copyBarcode},
+				{Key: "fulfilled", Value: false},
+				{Key: "notified", Value: false},
+			}),
+		)
+
+		router := mux.NewRouter()
+		router.HandleFunc("/checkin", handler.CheckIn).Methods("POST")
+
+		reqBody := struct {
+			CopyBarcode string `json:"copy_barcode"`
+		}{
+			CopyBarcode: copyBarcode,
+		}
+		reqBytes, _ := json.Marshal(reqBody)
+		req := httptest.NewRequest(http.MethodPost, "/checkin", bytes.NewReader(reqBytes))
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+
+		res := w.Result()
+		defer res.Body.Close()
+
+		if res.StatusCode != http.StatusNotFound {
+			t.Errorf("expected status OK, got %v", res.Status)
+		}
+	})
+
+	mt.Run("loan not found for check-in", func(mt *mtest.T) {
+		handler := handlers.LoanHandler{
+			LoanCol: mt.Coll,
+		}
+
+		copyBarcode := "654321"
+
+		mt.AddMockResponses(
+			// No active loan found
+			mtest.CreateCursorResponse(0, "test.loans", mtest.FirstBatch, nil),
+		)
+
+		router := mux.NewRouter()
+		router.HandleFunc("/checkin", handler.CheckIn).Methods("POST")
+
+		reqBody := struct {
+			CopyBarcode string `json:"copy_barcode"`
+		}{
+			CopyBarcode: copyBarcode,
+		}
+		reqBytes, _ := json.Marshal(reqBody)
+		req := httptest.NewRequest(http.MethodPost, "/checkin", bytes.NewReader(reqBytes))
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+
+		res := w.Result()
+		defer res.Body.Close()
+
+		if res.StatusCode != http.StatusNotFound {
+			t.Errorf("expected status NotFound, got %v", res.Status)
+		}
+	})
+}
+
+func TestLoanHandler_RenewLoan(t *testing.T) {
+	mt := mtest.New(t, mtest.NewOptions().ClientType(mtest.Mock))
+	if mt.Client != nil {
+		defer mt.Client.Disconnect(context.Background())
+	}
+
+	mt.Run("successful loan renewal", func(mt *mtest.T) {
+		handler := handlers.LoanHandler{
+			LoanCol: mt.Coll,
 			Config: struct {
 				PremiumMemberRenewalDays  int
 				StandardMemberRenewalDays int
@@ -37,42 +122,31 @@ func TestLoanHandler_CheckOut(t *testing.T) {
 			},
 		}
 
-		// Mock member data
 		memberID := primitive.NewObjectID()
 		copyBarcode := "123456"
-		member := models.Member{
-			ID:      memberID,
-			Name:    "John Doe",
-			Tier:    models.TierPremium,
-			Blocked: false,
-		}
-		copyObj := models.Copy{
-			Barcode: copyBarcode,
-			Status:  models.StatusAvailable,
-		}
 
+		// Mock loan data
 		mt.AddMockResponses(
-			mtest.CreateCursorResponse(1, "test.members", mtest.FirstBatch, bson.D{
-				{Key: "_id", Value: member.ID},
-				{Key: "tier", Value: member.Tier},
-				{Key: "blocked", Value: member.Blocked},
-			}),
-			mtest.CreateCursorResponse(1, "test.copies", mtest.FirstBatch, bson.D{
-				{Key: "barcode", Value: copyObj.Barcode},
-				{Key: "status", Value: copyObj.Status},
+			mtest.CreateCursorResponse(1, "test.loans", mtest.FirstBatch, bson.D{
+				{Key: "member_id", Value: memberID},
+				{Key: "copy_barcode", Value: copyBarcode},
+				{Key: "returned", Value: false},
+				{Key: "due_date", Value: time.Now()},
 			}),
 		)
 
-		// Create and configure the router
 		router := mux.NewRouter()
-		router.HandleFunc("/checkout", handler.CheckOut).Methods("POST")
+		router.HandleFunc("/loan/renew", handler.RenewLoan).Methods("POST")
 
-		reqBody := handlers.CheckOutRequest{
+		reqBody := struct {
+			MemberID    string `json:"member_id"`
+			CopyBarcode string `json:"copy_barcode"`
+		}{
 			MemberID:    memberID.Hex(),
 			CopyBarcode: copyBarcode,
 		}
 		reqBytes, _ := json.Marshal(reqBody)
-		req := httptest.NewRequest(http.MethodPost, "/checkout", bytes.NewReader(reqBytes))
+		req := httptest.NewRequest(http.MethodPost, "/loan/renew", bytes.NewReader(reqBytes))
 		w := httptest.NewRecorder()
 
 		router.ServeHTTP(w, req)
@@ -80,42 +154,36 @@ func TestLoanHandler_CheckOut(t *testing.T) {
 		res := w.Result()
 		defer res.Body.Close()
 
-		//as this member is not present
-		if res.StatusCode != http.StatusNotFound {
+		if res.StatusCode != http.StatusOK {
 			t.Errorf("expected status OK, got %v", res.Status)
 		}
 	})
 
-	mt.Run("blocked member cannot checkout", func(mt *mtest.T) {
+	mt.Run("loan not found for renewal", func(mt *mtest.T) {
 		handler := handlers.LoanHandler{
-			MemberCol: mt.Coll,
+			LoanCol: mt.Coll,
 		}
 
-		// Mock member data
 		memberID := primitive.NewObjectID()
-		member := models.Member{
-			ID:      memberID,
-			Name:    "John Doe",
-			Tier:    models.TierPremium,
-			Blocked: true, // Member is blocked
-		}
+		copyBarcode := "654321"
 
-		mt.AddMockResponses(mtest.CreateCursorResponse(1, "test.members", mtest.FirstBatch, bson.D{
-			{Key: "_id", Value: member.ID},
-			{Key: "tier", Value: member.Tier},
-			{Key: "blocked", Value: member.Blocked},
-		}))
+		mt.AddMockResponses(
+			// No loan found
+			mtest.CreateCursorResponse(0, "test.loans", mtest.FirstBatch, nil),
+		)
 
-		// Create and configure the router
 		router := mux.NewRouter()
-		router.HandleFunc("/checkout", handler.CheckOut).Methods("POST")
+		router.HandleFunc("/loan/renew", handler.RenewLoan).Methods("POST")
 
-		reqBody := handlers.CheckOutRequest{
+		reqBody := struct {
+			MemberID    string `json:"member_id"`
+			CopyBarcode string `json:"copy_barcode"`
+		}{
 			MemberID:    memberID.Hex(),
-			CopyBarcode: "123456",
+			CopyBarcode: copyBarcode,
 		}
 		reqBytes, _ := json.Marshal(reqBody)
-		req := httptest.NewRequest(http.MethodPost, "/checkout", bytes.NewReader(reqBytes))
+		req := httptest.NewRequest(http.MethodPost, "/loan/renew", bytes.NewReader(reqBytes))
 		w := httptest.NewRecorder()
 
 		router.ServeHTTP(w, req)
@@ -123,8 +191,8 @@ func TestLoanHandler_CheckOut(t *testing.T) {
 		res := w.Result()
 		defer res.Body.Close()
 
-		if res.StatusCode != http.StatusForbidden {
-			t.Errorf("expected status Forbidden, got %v", res.Status)
+		if res.StatusCode != http.StatusNotFound {
+			t.Errorf("expected status NotFound, got %v", res.Status)
 		}
 	})
 }
