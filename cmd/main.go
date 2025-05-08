@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"open-library-explorer/internal/daemon"
 	"open-library-explorer/internal/handlers"
 	"open-library-explorer/internal/middleware"
 	"open-library-explorer/internal/utils"
@@ -22,6 +23,11 @@ func main() {
 	cfg := configs.LoadConfig()
 	db.Connect(cfg.MongoURI)
 	utils.InitJwtSecret(cfg.JWTSecret)
+
+	logExporter := daemon.LogExporter{
+		Coll: db.GetCollection(configs.LoadConfig().DBName, "audit_logs"),
+	}
+	logExporter.InitLogExporter()
 
 	r := mux.NewRouter()
 	r.Use(middleware.JSONMiddleware)

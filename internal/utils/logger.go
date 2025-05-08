@@ -18,6 +18,7 @@ func (l *Logger) Log(ctx context.Context, entity, action string, data any) error
 		Entity:    entity,
 		Action:    action,
 		Data:      data,
+		Exported:  false,
 	}
 	_, err := l.Collection.InsertOne(ctx, log)
 	return err

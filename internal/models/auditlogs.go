@@ -12,4 +12,5 @@ type AuditLog struct {
 	Action      string             `bson:"action" json:"action"`
 	PerformedBy string             `bson:"performed_by" json:"performed_by"` // could be user ID or system
 	Data        any                `bson:"data" json:"data"`                 // raw payload
+	Exported    bool               `bson:"exported" json:"exported"`
 }
