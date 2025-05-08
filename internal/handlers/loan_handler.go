@@ -255,3 +255,30 @@ func (h *LoanHandler) RenewLoan(w http.ResponseWriter, r *http.Request) {
 		"member_id": req.MemberID,
 	})
 }
+
+func (h *LoanHandler) GetOverdueLoans(w http.ResponseWriter, r *http.Request) {
+	filter := bson.M{
+		"due_date": bson.M{"$lt": time.Now()}, // Due date earlier than now
+		"returned": false,                     // Not returned
+	}
+
+	cursor, err := h.LoanCol.Find(r.Context(), filter)
+	if err != nil {
+		utils.JSONError(w, "Failed to fetch overdue loans", http.StatusInternalServerError)
+		return
+	}
+	defer cursor.Close(r.Context())
+
+	var overdueLoans []models.Loan
+	if err := cursor.All(r.Context(), &overdueLoans); err != nil {
+		utils.JSONError(w, "Failed to parse overdue loans", http.StatusInternalServerError)
+		return
+	}
+
+	if len(overdueLoans) == 0 {
+		utils.JSONError(w, "No Loans Found", http.StatusNotFound)
+		return
+	}
+
+	json.NewEncoder(w).Encode(overdueLoans)
+}

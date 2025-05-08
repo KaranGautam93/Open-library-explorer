@@ -86,6 +86,7 @@ func main() {
 	r.HandleFunc("/checkout", loanHandler.CheckOut).Methods("POST")
 	r.HandleFunc("/checkin", loanHandler.CheckIn).Methods("POST")
 	r.HandleFunc("/loan/renew", loanHandler.RenewLoan).Methods("POST")
+	r.HandleFunc("/loans/overdue", loanHandler.GetOverdueLoans).Methods("GET")
 
 	reservationHandler := &handlers.ReservationHandler{
 		ReservationCol: db.GetCollection(cfg.DBName, "holds"),

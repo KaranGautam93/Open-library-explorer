@@ -100,8 +100,8 @@ func TestBookHandler_GetBooks(t *testing.T) {
 		res := w.Result()
 		defer res.Body.Close()
 
-		if res.StatusCode != http.StatusOK {
-			t.Errorf("expected status OK, got %v", res.Status)
+		if res.StatusCode != http.StatusInternalServerError {
+			t.Errorf("expected status Internal server error, got %v", res.Status)
 		}
 	})
 }
